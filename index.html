@@ -158,50 +158,17 @@ font-size:11px!important;font-weight:800!important;padding:2px 4px!important
 }
 
 
-/* v3.3 · estados iniciales didácticos */
-#dynamicLegend{
- display:block!important;
- visibility:visible!important;
- opacity:1!important;
-}
+/* v3.6 · la leyenda se puede mostrar u ocultar */
+#dynamicLegend.hidden{display:none!important;}
 
 
-/* v3.5 · móvil: leyenda compacta inferior + escala siempre despejada */
+#legendToggle{white-space:nowrap}
 @media(max-width:600px){
  #dynamicLegend{
-   position:absolute!important;
-   left:50%!important;
-   right:auto!important;
-   top:auto!important;
-   bottom:6px!important;
-   transform:translateX(-50%)!important;
-   width:calc(100vw - 12px)!important;
-   max-height:62px!important;
-   overflow-y:auto!important;
-   box-sizing:border-box!important;
-   padding:5px 8px!important;
-   font-size:9px!important;
-   line-height:1.08!important;
-   z-index:1100!important;
- }
- #dynamicLegend h2{
-   font-size:10px!important;
-   margin:0 0 2px!important;
-   line-height:1!important;
- }
- #dynamicLegend p,
- #dynamicLegend div{
-   margin-top:1px!important;
-   margin-bottom:1px!important;
- }
- /* La escala queda justo encima de la leyenda, no detrás de ella */
- .leaflet-bottom.leaflet-left{
-   bottom:74px!important;
-   z-index:1250!important;
- }
- #scaleNum{
-   bottom:74px!important;
-   z-index:1250!important;
+   bottom:12px!important;
+   width:calc(100vw - 20px)!important;
+   max-height:42vh!important;
+   overflow:auto!important;
  }
 }
 
@@ -266,7 +233,7 @@ font-size:11px!important;font-weight:800!important;padding:2px 4px!important
 </div>
 
 
-<div id="dynamicLegend" class="panel" role="region" aria-label="Leyenda activa">
+<div id="dynamicLegend" class="panel hidden" role="region" aria-label="Leyenda activa">
 <h3>Leyenda activa</h3>
 <div id="legendContent"></div>
 
@@ -296,7 +263,19 @@ font-size:11px!important;font-weight:800!important;padding:2px 4px!important
   <div class="oriCenter"></div>
 </div>
 <div id="status">Híbrido PNOA + cartografía · límites municipales blancos · pulsa el mapa para ver coordenadas</div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+function toggleLegend(){
+ const el=document.getElementById('dynamicLegend');
+ const btn=document.getElementById('legendToggle');
+ const hidden=el.classList.toggle('hidden');
+ if(btn){
+   btn.innerHTML=hidden?'<span>🧾</span> Leyenda':'<span>✕</span> Ocultar leyenda';
+   btn.setAttribute('aria-expanded', hidden?'false':'true');
+ }
+ if(!hidden) updateLegend();
+}
+
+</script>
 <script>
 const map=L.map('map',{zoomControl:true}).setView([28.30,-16.55],9);
 L.control.scale({metric:true,imperial:false,position:'bottomleft'}).addTo(map);
