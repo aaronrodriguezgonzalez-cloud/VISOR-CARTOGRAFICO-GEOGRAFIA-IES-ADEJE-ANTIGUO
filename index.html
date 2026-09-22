@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Visor Geográfico · IES Adeje · v4.0</title>
+<title>Visor Geográfico · IES Adeje · v4.1 URGENTE</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
 html,body,#map{height:100%;margin:0} body{font-family:system-ui,-apple-system,sans-serif;overflow:hidden}
@@ -172,6 +172,21 @@ font-size:11px!important;font-weight:800!important;padding:2px 4px!important
  }
 }
 
+
+/* v4.1 · interfaz táctil: controles accesibles sin tapar el mapa */
+@media(max-width:700px){
+ .brand{top:5px!important;width:calc(100vw - 74px)!important;max-height:92px!important;padding:5px 7px!important}
+ .brand img{width:40px!important;height:40px!important}.brand .brandTitle{font-size:11px!important}.brand .brandDept{font-size:8px!important}.brand .brandTeacher{font-size:9px!important}.brand .brandAbout{display:none!important}
+ .toolbar{position:absolute!important;top:auto!important;bottom:8px!important;left:8px!important;right:8px!important;display:flex!important;flex-direction:row!important;gap:5px!important;overflow-x:auto!important;overflow-y:hidden!important;max-width:none!important;padding:3px!important;z-index:1300!important;-webkit-overflow-scrolling:touch}
+ .tool{flex:0 0 44px!important;width:44px!important;height:44px!important;padding:5px!important;text-align:center!important;font-size:0!important}.tool span{font-size:20px!important}
+ .panel{top:102px!important;left:8px!important;right:8px!important;width:auto!important;max-height:calc(100vh - 170px)!important;z-index:1400!important;padding:10px!important}
+ #status{bottom:60px!important;max-width:88%!important;font-size:9px!important}
+ #orientation{right:8px!important;bottom:64px!important;width:64px!important;height:64px!important}
+ .leaflet-bottom.leaflet-left{bottom:55px!important}
+ .leaflet-control-zoom{margin-top:104px!important}
+ #dynamicLegend{bottom:62px!important;max-height:32vh!important}
+}
+
 </style>
 </head><body>
 <div id="map"></div>
@@ -269,6 +284,15 @@ font-size:11px!important;font-weight:800!important;padding:2px 4px!important
 </div>
 <div id="status">Híbrido PNOA + cartografía · límites municipales blancos · pulsa el mapa para ver coordenadas</div>
 <script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+<script>
+// Fallback GeoTIFF: si unpkg falla, se intenta jsDelivr antes de cualquier consulta de altitud.
+window.geoTiffReady = new Promise((resolve)=>{
+  if(window.GeoTIFF){resolve(true);return;}
+  const s=document.createElement('script');
+  s.src='https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js';
+  s.onload=()=>resolve(!!window.GeoTIFF); s.onerror=()=>resolve(false); document.head.appendChild(s);
+});
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -529,6 +553,8 @@ const mdtCache={};
 proj4.defs('EPSG:32628','+proj=utm +zone=28 +datum=WGS84 +units=m +no_defs +type=crs');
 async function elevationAt(lat,lon){
  try{
+  if(!window.GeoTIFF){await window.geoTiffReady;}
+  if(!window.GeoTIFF) throw new Error('GeoTIFF no disponible');
   const xy=proj4('EPSG:4326','EPSG:32628',[lon,lat]), x=xy[0], y=xy[1];
   const entry=Object.entries(MDT25).find(([k,v])=>x>=v.bbox[0]&&x<=v.bbox[2]&&y>=v.bbox[1]&&y<=v.bbox[3]);
   if(!entry)return null;
@@ -601,6 +627,15 @@ function redrawMeasure(){
  if(measureMode==='area'&&measurePts.length>2){res=fmtArea(geodesicArea(measurePts));}
  document.getElementById('measureResult').innerHTML='<b>Resultado:</b> '+res;status('Medición: '+res);
 }
+function liveMeasurePreview(ll){
+ if(!measureMode||!measureLayer||measurePts.length<1)return;
+ let pts=measurePts.concat([ll]),res='—';
+ if(measureMode==='distance'||measureMode==='profile'){
+   let d=0;for(let i=1;i<pts.length;i++)d+=pts[i-1].distanceTo(pts[i]);res=fmtDistance(d);
+ }else if(measureMode==='area'&&pts.length>2){res=fmtArea(geodesicArea(pts));}
+ document.getElementById('measureResult').innerHTML='<b>Resultado provisional:</b> '+res;
+}
+map.on('mousemove',e=>liveMeasurePreview(e.latlng));
 function geodesicArea(pts){let a=0,R=6378137;if(pts.length<3)return 0;for(let i=0;i<pts.length;i++){let p1=pts[i],p2=pts[(i+1)%pts.length];a+=(p2.lng-p1.lng)*Math.PI/180*(2+Math.sin(p1.lat*Math.PI/180)+Math.sin(p2.lat*Math.PI/180));}return Math.abs(a*R*R/2);}
 function interpolateProfilePoints(pts,n=120){
  const seg=[],cum=[0];let total=0;
