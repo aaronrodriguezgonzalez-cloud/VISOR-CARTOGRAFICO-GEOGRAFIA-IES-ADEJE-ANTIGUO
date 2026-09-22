@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Visor Geográfico · IES Adeje · RECUPERADO</title>
+<title>Visor Geográfico · IES Adeje · v3.7</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
 html,body,#map{height:100%;margin:0} body{font-family:system-ui,-apple-system,sans-serif;overflow:hidden}
@@ -308,51 +308,26 @@ const geoGrid=L.layerGroup();
 let gridEnabled=true;
 let gridOpacity=0.70;
 
-// Intervalo angular adaptativo: mantiene una densidad visual similar a cualquier escala.
-// Se elige un paso "cartográfico" agradable (grados, minutos o segundos) según la extensión visible.
-const GRID_STEPS=[
-  30,20,10,5,2,1,
-  0.5,0.25,1/6,1/12,1/30,1/60,
-  1/120,1/240,1/360,1/720,1/1800,1/3600
-];
-function gridStepForBounds(){
- const b=map.getBounds();
- const latSpan=Math.max(1e-9,Math.min(170,b.getNorth()-b.getSouth()));
- const lonSpan=Math.max(1e-9,Math.min(360,b.getEast()-b.getWest()));
- const size=map.getSize();
- // Una línea aproximadamente cada 105–135 px; así la malla no se vacía al acercarnos.
- const targetLat=latSpan/Math.max(4,Math.min(12,size.y/115));
- const targetLon=lonSpan/Math.max(4,Math.min(14,size.x/120));
- const target=Math.max(targetLat,targetLon);
- let best=GRID_STEPS[GRID_STEPS.length-1];
- for(const st of GRID_STEPS){ if(st>=target) best=st; else break; }
- return best;
+function gridStepForZoom(z){
+ if(z<=4) return 10;
+ if(z<=6) return 5;
+ if(z<=8) return 2;
+ if(z<=10) return 1;
+ if(z<=12) return 0.5;
+ if(z<=14) return 0.25;
+ if(z<=16) return 0.10;
+ return 0.05;
 }
-function gridStepForZoom(){ return gridStepForBounds(); } // compatibilidad con leyenda
-function fmtDeg(v,axis,step){
- const a=Math.abs(v), hemi=axis==='lat'?(v>=0?'N':'S'):(v>=0?'E':'O');
- let totalSeconds=Math.round(a*3600);
- let d=Math.floor(totalSeconds/3600);
- let m=Math.floor((totalSeconds-d*3600)/60);
- let sec=totalSeconds-d*3600-m*60;
- if(step>=1) return d+'° '+hemi;
- if(step>=1/60){
-   const mins=Math.round((a-d)*60);
-   if(mins===60){d++;m=0;} else m=mins;
-   return d+'° '+String(m).padStart(2,'0')+'′ '+hemi;
- }
- return d+'° '+String(m).padStart(2,'0')+'′ '+String(sec).padStart(2,'0')+'″ '+hemi;
-}
-function fmtGridStep(step){
- if(step>=1) return (Number.isInteger(step)?step:step.toLocaleString('es-ES',{maximumFractionDigits:2}))+'°';
- const min=step*60;
- if(min>=1) return (Math.abs(min-Math.round(min))<1e-8?Math.round(min):min.toLocaleString('es-ES',{maximumFractionDigits:1}))+'′';
- return Math.round(step*3600)+'″';
+function fmtDeg(v,axis){
+ const a=Math.abs(v);
+ const hemi=axis==='lat'?(v>=0?'N':'S'):(v>=0?'E':'O');
+ let dec=a>=10?1:(a>=1?2:3);
+ return a.toFixed(dec).replace('.',',')+'° '+hemi;
 }
 function redrawGeoGrid(){
  geoGrid.clearLayers();
  if(!gridEnabled) return;
- const b=map.getBounds(), step=gridStepForBounds();
+ const b=map.getBounds(), step=gridStepForZoom(map.getZoom());
  const south=Math.max(-85,b.getSouth()), north=Math.min(85,b.getNorth());
  const west=Math.max(-180,b.getWest()), east=Math.min(180,b.getEast());
  const lat0=Math.floor(south/step)*step, lon0=Math.floor(west/step)*step;
@@ -364,7 +339,7 @@ function redrawGeoGrid(){
    if(y<south-step/100 || y>north+step/100) continue;
    L.polyline([[y,west],[y,east]],style).addTo(geoGrid);
    L.circleMarker([y,west+(east-west)*.045],{radius:0,opacity:0,fillOpacity:0,interactive:false})
-     .bindTooltip(fmtDeg(y,'lat',step),{permanent:true,direction:'right',className:'grid-label',opacity:1})
+     .bindTooltip(fmtDeg(y,'lat'),{permanent:true,direction:'right',className:'grid-label',opacity:1})
      .addTo(geoGrid);
  }
 
@@ -374,7 +349,7 @@ function redrawGeoGrid(){
    if(x<west-step/100 || x>east+step/100) continue;
    L.polyline([[south,x],[north,x]],style).addTo(geoGrid);
    L.circleMarker([south+(north-south)*.055,x],{radius:0,opacity:0,fillOpacity:0,interactive:false})
-     .bindTooltip(fmtDeg(x,'lon',step),{permanent:true,direction:'top',className:'grid-label',opacity:1})
+     .bindTooltip(fmtDeg(x,'lon'),{permanent:true,direction:'top',className:'grid-label',opacity:1})
      .addTo(geoGrid);
  }
 }
@@ -582,7 +557,7 @@ function gps(){
 
 // Medición
 let measureMode=null,measurePts=[],measureLayer=null;
-function fmt(n,max=2){return Number(n).toLocaleString('es-ES',{minimumFractionDigits:0,maximumFractionDigits:max});}
+const fmt=(n,max=2)=>Number(n).toLocaleString('es-ES',{minimumFractionDigits:0,maximumFractionDigits:max});
 function fmtDistance(m){return m>=1000?fmt(m/1000,2)+' km':fmt(m,0)+' m';}
 function fmtArea(a){return a>=1000000?fmt(a/1e6,2)+' km²':fmt(a,0)+' m²';}
 function hideProfile(){const b=document.getElementById('profileBox');if(b)b.style.display='none';}
@@ -706,7 +681,7 @@ function updateLegend(){
 
  // Red geográfica
  if(gridEnabled && map.hasLayer(geoGrid)){
-   h+='<div style="margin-bottom:8px"><b>Red geográfica</b><br><span style="display:inline-block;width:24px;border-top:3px solid #fff;box-shadow:0 0 0 1px #555;vertical-align:middle;margin-right:6px"></span>Paralelos y meridianos ('+fmtGridStep(gridStepForBounds())+')</div>';
+   h+='<div style="margin-bottom:8px"><b>Red geográfica</b><br><span style="display:inline-block;width:24px;border-top:3px solid #fff;box-shadow:0 0 0 1px #555;vertical-align:middle;margin-right:6px"></span>Paralelos y meridianos ('+gridStepForZoom(map.getZoom())+'°)</div>';
  }
 
  // ENP visibles
