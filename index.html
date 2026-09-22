@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Visor Geográfico · IES Adeje</title>
+<title>Visor Geográfico · IES Adeje · v3.7</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
 html,body,#map{height:100%;margin:0} body{font-family:system-ui,-apple-system,sans-serif;overflow:hidden}
@@ -244,7 +244,7 @@ font-size:11px!important;font-weight:800!important;padding:2px 4px!important
 <button class="action" onclick="goCoords()">Localizar</button><div id="coordbox">WGS84 · grados decimales (EPSG:4326)</div></div>
 
 <div id="measurePanel" class="panel hidden"><h3>Medición</h3>
-<p><b>Distancia:</b> pulsa «Iniciar distancia» y marca puntos sobre el mapa. <b>Área:</b> marca al menos 3 vértices. Doble toque/clic o «Terminar» finaliza.</p>
+<p><b>Distancia:</b> pulsa «Iniciar distancia» y marca puntos sobre el mapa. <b>Área:</b> marca al menos 3 vértices. Pulsa «Terminar» para cerrar la medición. El resultado permanece visible hasta que pulses «Borrar» o inicies otra medición.</p>
 <div class="row"><button class="action" onclick="startMeasure('distance')">📏 Distancia</button><button class="action" onclick="startMeasure('area')">▱ Área</button></div>
 <div class="row" style="margin-top:5px"><button class="action" onclick="finishMeasure()">Terminar</button><button class="action" onclick="clearMeasure()">Borrar</button></div>
 <p id="measureResult"><b>Resultado:</b> —</p></div>
@@ -263,6 +263,8 @@ font-size:11px!important;font-weight:800!important;padding:2px 4px!important
   <div class="oriCenter"></div>
 </div>
 <div id="status">Híbrido PNOA + cartografía · límites municipales blancos · pulsa el mapa para ver coordenadas</div>
+<script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
 function toggleLegend(){
  const el=document.getElementById('dynamicLegend');
@@ -481,15 +483,56 @@ const ScaleNum=L.Control.extend({options:{position:'bottomleft'},onAdd:function(
  const den=Math.round(mpp/0.0002645833333);this._d.innerHTML='Escala aprox. 1:'+den.toLocaleString('es-ES');}});
 map.addControl(new ScaleNum());
 
-// Coordenadas al tocar
-let coordMarker=null;
-map.on('click',e=>{
- if(measureMode){addMeasurePoint(e.latlng);return;}
- if(coordMarker)map.removeLayer(coordMarker);
- coordMarker=L.circleMarker(e.latlng,{radius:5}).addTo(map).bindPopup('<b>'+e.latlng.lat.toFixed(6)+', '+e.latlng.lng.toFixed(6)+'</b><br>WGS84 / EPSG:4326').openPopup();
- status('Lat '+e.latlng.lat.toFixed(6)+' · Lon '+e.latlng.lng.toFixed(6));
-});
-function goCoords(){const lat=parseFloat(latIn.value),lon=parseFloat(lonIn.value);if(!isFinite(lat)||!isFinite(lon))return alert('Introduce latitud y longitud válidas.');const ll=L.latLng(lat,lon);map.setView(ll,16);if(coordMarker)map.removeLayer(coordMarker);coordMarker=L.marker(ll).addTo(map).bindPopup('<b>Coordenadas introducidas</b><br>'+lat.toFixed(6)+', '+lon.toFixed(6)).openPopup();closePanels();}
+// Coordenadas + altitud MDT25 local (25 m)
+// Los GeoTIFF se cargan bajo demanda: solo se lee el bloque de la isla consultada.
+const MDT25 = {
+ EH:{file:'MDT25_EH.tif',bbox:[187287.5,3059642.5,216987.5,3084992.5]},
+ FV:{file:'MDT25_FV.tif',bbox:[547172.5,3101287.5,617122.5,3183637.5]},
+ GC:{file:'MDT25_GC.tif',bbox:[416882.5,3066932.5,465732.5,3118332.5]},
+ LG:{file:'MDT25_LG.tif',bbox:[268217.5,3100407.5,294842.5,3124532.5]},
+ LP:{file:'MDT25_LP.tif',bbox:[205302.5,3149632.5,234927.5,3196707.5]},
+ LZ:{file:'MDT25_LZ.tif',bbox:[608022.5,3181077.5,670547.5,3256002.5]},
+ TF:{file:'MDT25_TF.tif',bbox:[310222.5,3097132.5,391597.5,3165807.5]}
+};
+const mdtCache={};
+proj4.defs('EPSG:32628','+proj=utm +zone=28 +datum=WGS84 +units=m +no_defs +type=crs');
+async function elevationAt(lat,lon){
+ try{
+  const xy=proj4('EPSG:4326','EPSG:32628',[lon,lat]), x=xy[0], y=xy[1];
+  const entry=Object.entries(MDT25).find(([k,v])=>x>=v.bbox[0]&&x<=v.bbox[2]&&y>=v.bbox[1]&&y<=v.bbox[3]);
+  if(!entry)return null;
+  const [key,meta]=entry;
+  if(!mdtCache[key]){
+   const tif=await GeoTIFF.fromUrl('mdt25_web/'+meta.file);
+   const image=await tif.getImage();
+   mdtCache[key]={image,bbox:image.getBoundingBox(),w:image.getWidth(),h:image.getHeight()};
+  }
+  const d=mdtCache[key], b=d.bbox;
+  const col=Math.floor((x-b[0])/(b[2]-b[0])*d.w);
+  const row=Math.floor((b[3]-y)/(b[3]-b[1])*d.h);
+  if(col<0||row<0||col>=d.w||row>=d.h)return null;
+  const r=await d.image.readRasters({window:[col,row,col+1,row+1],interleave:true});
+  const z=Number(r[0]);
+  if(!Number.isFinite(z)||z===-32768||z<-10)return null;
+  return Math.round(z);
+ }catch(err){console.warn('Consulta MDT25:',err);return null;}
+}
+function pointHtml(lat,lon,title='Punto consultado',altText='Consultando altitud…'){
+ return '<b>'+title+'</b><br>Latitud: '+Math.abs(lat).toFixed(6)+'° '+(lat>=0?'N':'S')+'<br>Longitud: '+Math.abs(lon).toFixed(6)+'° '+(lon>=0?'E':'O')+'<br><b>Altitud aprox.:</b> '+altText+'<br><small>MDT25 · resolución 25 m</small>';
+}
+let coordMarker=null,coordQuerySeq=0;
+async function showPoint(ll,title='Punto consultado',useMarker=true){
+ const seq=++coordQuerySeq,lat=ll.lat,lon=ll.lng;
+ if(useMarker){if(coordMarker)map.removeLayer(coordMarker);coordMarker=L.circleMarker(ll,{radius:5}).addTo(map);coordMarker.bindPopup(pointHtml(lat,lon,title)).openPopup();}
+ status('Lat '+lat.toFixed(6)+' · Lon '+lon.toFixed(6)+' · consultando altitud…');
+ const z=await elevationAt(lat,lon); if(seq!==coordQuerySeq)return z;
+ const ztxt=z===null?'sin dato':z.toLocaleString('es-ES')+' m';
+ if(useMarker&&coordMarker){coordMarker.setPopupContent(pointHtml(lat,lon,title,ztxt));coordMarker.openPopup();}
+ status('Lat '+lat.toFixed(6)+' · Lon '+lon.toFixed(6)+' · Altitud aprox. '+ztxt);
+ return z;
+}
+map.on('click',e=>{if(measureMode){addMeasurePoint(e.latlng);return;}showPoint(e.latlng);});
+function goCoords(){const lat=parseFloat(latIn.value),lon=parseFloat(lonIn.value);if(!isFinite(lat)||!isFinite(lon))return alert('Introduce latitud y longitud válidas.');const ll=L.latLng(lat,lon);map.setView(ll,16);closePanels();showPoint(ll,'Coordenadas introducidas');}
 
 // GPS
 let gpsMarker=null,gpsCircle=null;
@@ -500,14 +543,15 @@ function gps(){
   const ll=[p.coords.latitude,p.coords.longitude];
   if(gpsMarker)map.removeLayer(gpsMarker);if(gpsCircle)map.removeLayer(gpsCircle);
   gpsCircle=L.circle(ll,{radius:p.coords.accuracy,weight:1,fillOpacity:.08}).addTo(map);
-  gpsMarker=L.marker(ll).addTo(map).bindPopup('<b>Tu ubicación</b><br>Precisión aprox.: ±'+Math.round(p.coords.accuracy)+' m').openPopup();
-  map.setView(ll,17);status('GPS activo · precisión ±'+Math.round(p.coords.accuracy)+' m');
+  gpsMarker=L.marker(ll).addTo(map).bindPopup('<b>Tu ubicación</b><br>Latitud: '+p.coords.latitude.toFixed(6)+'° N<br>Longitud: '+Math.abs(p.coords.longitude).toFixed(6)+'° '+(p.coords.longitude>=0?'E':'O')+'<br><b>Altitud aprox.:</b> consultando…<br>Precisión GPS: ±'+Math.round(p.coords.accuracy)+' m').openPopup();
+  map.setView(ll,17);status('GPS activo · consultando altitud…');
+  elevationAt(p.coords.latitude,p.coords.longitude).then(z=>{const ztxt=z===null?'sin dato':z.toLocaleString('es-ES')+' m';gpsMarker.setPopupContent('<b>Tu ubicación</b><br>Latitud: '+p.coords.latitude.toFixed(6)+'° N<br>Longitud: '+Math.abs(p.coords.longitude).toFixed(6)+'° '+(p.coords.longitude>=0?'E':'O')+'<br><b>Altitud aprox.:</b> '+ztxt+'<br>Precisión GPS: ±'+Math.round(p.coords.accuracy)+' m<br><small>MDT25 · resolución 25 m</small>');gpsMarker.openPopup();status('GPS activo · altitud aprox. '+ztxt+' · precisión ±'+Math.round(p.coords.accuracy)+' m');});
  },err=>{status('No se pudo obtener la ubicación GPS');alert('Activa el permiso de ubicación del navegador. En GitHub Pages funciona mediante HTTPS.');},{enableHighAccuracy:true,timeout:12000,maximumAge:0});
 }
 
 // Medición
 let measureMode=null,measurePts=[],measureLayer=null;
-function startMeasure(mode){measureMode=mode;measurePts=[];if(measureLayer)map.removeLayer(measureLayer);measureLayer=L.layerGroup().addTo(map);closePanels();status(mode==='distance'?'MEDIR DISTANCIA · toca puntos · doble toque para terminar':'MEDIR ÁREA · marca al menos 3 vértices');}
+function startMeasure(mode){measureMode=mode;measurePts=[];if(measureLayer)map.removeLayer(measureLayer);measureLayer=L.layerGroup().addTo(map);document.querySelectorAll('.panel').forEach(p=>{if(p.id!=='measurePanel')p.classList.add('hidden')});document.getElementById('measurePanel').classList.remove('hidden');document.getElementById('measureResult').innerHTML='<b>Resultado:</b> —';status(mode==='distance'?'MEDIR DISTANCIA · toca puntos · pulsa «Terminar» al acabar':'MEDIR ÁREA · marca al menos 3 vértices · pulsa «Terminar» al acabar');}
 function addMeasurePoint(ll){measurePts.push(ll);L.circleMarker(ll,{radius:4}).addTo(measureLayer);redrawMeasure();}
 function redrawMeasure(){
  measureLayer.eachLayer(l=>{if(l instanceof L.Polyline && !(l instanceof L.CircleMarker))measureLayer.removeLayer(l);});
@@ -518,7 +562,7 @@ function redrawMeasure(){
  document.getElementById('measureResult').innerHTML='<b>Resultado:</b> '+res;status('Medición: '+res);
 }
 function geodesicArea(pts){let a=0,R=6378137;if(pts.length<3)return 0;for(let i=0;i<pts.length;i++){let p1=pts[i],p2=pts[(i+1)%pts.length];a+=(p2.lng-p1.lng)*Math.PI/180*(2+Math.sin(p1.lat*Math.PI/180)+Math.sin(p2.lat*Math.PI/180));}return Math.abs(a*R*R/2);}
-function finishMeasure(){measureMode=null;togglePanel('measurePanel');}
+function finishMeasure(){if(!measureMode)return;redrawMeasure();measureMode=null;document.getElementById('measurePanel').classList.remove('hidden');status('Medición terminada · resultado visible en el panel');}
 function clearMeasure(){measureMode=null;measurePts=[];if(measureLayer)map.removeLayer(measureLayer);measureLayer=null;document.getElementById('measureResult').innerHTML='<b>Resultado:</b> —';status('Medición borrada');}
 
 
